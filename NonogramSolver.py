@@ -1,4 +1,3 @@
-# The previous cell reset unexpectedly. Re-run the solver code quickly and print the result.
 from functools import lru_cache
 from typing import List, Tuple, Optional
 
