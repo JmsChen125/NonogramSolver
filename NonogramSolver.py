@@ -1,7 +1,7 @@
+# The previous cell reset unexpectedly. Re-run the solver code quickly and print the result.
 from functools import lru_cache
 from typing import List, Tuple, Optional
 
-# Cell states: -1 unknown, 0 empty, 1 filled
 UNKNOWN, EMPTY, FILLED = -1, 0, 1
 
 class NonogramSolver:
@@ -12,59 +12,136 @@ class NonogramSolver:
         self.col_clues = [tuple(c) for c in col_clues]
         self.grid = [[UNKNOWN for _ in range(self.C)] for _ in range(self.R)]
 
-    # -------------------- Utilities --------------------
     def row(self, r): return self.grid[r]
     def col(self, c): return [self.grid[r][c] for r in range(self.R)]
     def set_row(self, r, vals):
         for c, v in enumerate(vals):
-            if v != UNKNOWN: self.grid[r][c] = v
+            if v != UNKNOWN:
+                self.grid[r][c] = v
     def set_col(self, c, vals):
         for r, v in enumerate(vals):
-            if v != UNKNOWN: self.grid[r][c] = v
+            if v != UNKNOWN:
+                self.grid[r][c] = v
 
     @staticmethod
-    def _fits_line(line: List[int], candidate: Tuple[int, ...]) -> bool:
-        # line contains UNKNOWN/EMPTY/FILLED; candidate is 0/1 tuple
-        for a, b in zip(line, candidate):
-            if a != UNKNOWN and a != b:
+    def _min_rest(runs: Tuple[int, ...], i: int) -> int:
+        rest = runs[i+1:]
+        return sum(rest) + max(0, len(rest) - 1)
+
+    @staticmethod
+    def _can_place_block(line: List[int], s: int, k: int, is_last: bool) -> bool:
+        L = len(line)
+        if s > 0 and line[s-1] == FILLED:
+            return False
+        if s + k < L and line[s + k] == FILLED:
+            return False
+        for t in range(s, s + k):
+            if line[t] == EMPTY:
                 return False
         return True
 
     @staticmethod
-    def _intersect_patterns(patterns: List[Tuple[int, ...]]) -> List[int]:
-        if not patterns:
-            return []
-        L = len(patterns[0])
-        out = []
-        for i in range(L):
-            col = {p[i] for p in patterns}
-            if len(col) == 1:
-                out.append(col.pop())
-            else:
-                out.append(UNKNOWN)
-        return out
+    def _earliest_starts(line: List[int], runs: Tuple[int, ...]) -> List[int]:
+        L = len(line)
+        m = len(runs)
+        starts = [None] * m
+        pos = 0
+        for i, k in enumerate(runs):
+            limit = L - k - NonogramSolver._min_rest(runs, i)
+            s = pos
+            placed = False
+            while s <= limit:
+                if NonogramSolver._can_place_block(line, s, k, is_last=(i == m - 1)):
+                    placed = True
+                    break
+                s += 1
+            if not placed:
+                raise ValueError("No earliest placement for block {} of size {}".format(i, k))
+            starts[i] = s
+            pos = s + k + 1
+        return starts  # type: ignore
 
-    # -------------------- Line generator --------------------
+    @staticmethod
+    def _latest_starts(line: List[int], runs: Tuple[int, ...]) -> List[int]:
+        L = len(line)
+        if not runs:
+            return []
+        rline = list(reversed(line))
+        rruns = tuple(reversed(runs))
+        estarts_rev = NonogramSolver._earliest_starts(rline, rruns)
+        m = len(runs)
+        latest = [None] * m
+        for i, k in enumerate(runs):
+            j = m - 1 - i
+            s_rev = estarts_rev[j]
+            latest[i] = L - (s_rev + k)
+        return latest  # type: ignore
+
+    @staticmethod
+    def _deduce_line_envelope(line: List[int], runs: Tuple[int, ...]) -> Tuple[List[int], bool]:
+        L = len(line)
+        m = len(runs)
+        if m == 0:
+            ded = [EMPTY] * L
+            for i, v in enumerate(line):
+                if v == FILLED:
+                    raise ValueError("Contradiction: line has FILLED but clues are empty")
+            changed = any(line[i] != ded[i] for i in range(L))
+            return ded, changed
+
+        estarts = NonogramSolver._earliest_starts(line, runs)
+        lstarts = NonogramSolver._latest_starts(line, runs)
+
+        for i in range(m):
+            if estarts[i] > lstarts[i]:
+                raise ValueError("Contradiction: block {} cannot be placed".format(i))
+
+        deduced = [UNKNOWN] * L
+        covered_any = [False] * L
+
+        for i, k in enumerate(runs):
+            e = estarts[i]
+            l = lstarts[i]
+            overlap_start = l
+            overlap_end = e + k - 1
+            if overlap_start <= overlap_end:
+                for x in range(overlap_start, overlap_end + 1):
+                    deduced[x] = FILLED
+            for s in range(e, l + 1):
+                if NonogramSolver._can_place_block(line, s, k, is_last=(i == m - 1)):
+                    for x in range(s, s + k):
+                        covered_any[x] = True
+
+        for x in range(L):
+            if deduced[x] == UNKNOWN and not covered_any[x]:
+                deduced[x] = EMPTY
+
+        for x, v in enumerate(line):
+            if v == FILLED and not covered_any[x]:
+                raise ValueError("Contradiction: known FILLED at {} cannot be covered".format(x))
+
+        changed = False
+        out = [UNKNOWN] * L
+        for i in range(L):
+            if deduced[i] != UNKNOWN and line[i] == UNKNOWN:
+                out[i] = deduced[i]
+                changed = True
+            else:
+                out[i] = UNKNOWN
+        return out, changed
+
     @staticmethod
     @lru_cache(maxsize=None)
     def _gen_all_line_patterns(length: int, clues: Tuple[int, ...]) -> List[Tuple[int, ...]]:
-        """
-        Generate all 0/1 patterns of given length matching clues (no constraints from current cells).
-        Uses simple recursion + spacing rules.
-        """
         if not clues:
-            return [tuple([EMPTY]*length)]
+            return [tuple([EMPTY] * length)]
         k = clues[0]
         rest = clues[1:]
         patterns = []
-        # Minimum space needed for remaining blocks (including separators)
         min_rest = sum(rest) + max(0, len(rest) - 1)
-        # Try placing first block starting at each feasible start position
         for start in range(0, length - k - min_rest + 1):
-            # Leading empties until 'start'
-            prefix = [EMPTY]*start + [FILLED]*k
+            prefix = [EMPTY] * start + [FILLED] * k
             if rest:
-                # Must have one EMPTY separator
                 if start + k >= length:
                     continue
                 prefix = prefix + [EMPTY]
@@ -72,43 +149,54 @@ class NonogramSolver:
                 for tail in NonogramSolver._gen_all_line_patterns(tail_len, rest):
                     patterns.append(tuple(prefix + list(tail)))
             else:
-                # No more blocks; fill remaining with EMPTY
-                suffix = [EMPTY]*(length - len(prefix))
+                suffix = [EMPTY] * (length - len(prefix))
                 patterns.append(tuple(prefix + suffix))
         return patterns
 
-    def _compatible_patterns(self, line: List[int], clues: Tuple[int, ...]) -> List[Tuple[int, ...]]:
-        """Filter pre-generated patterns by current line constraints to avoid re-enumerating."""
-        all_patterns = self._gen_all_line_patterns(len(line), clues)
-        # Quick prune: remove any pattern conflicting with fixed cells
-        return [p for p in all_patterns if self._fits_line(line, p)]
+    def _fits_line(self, line: List[int], candidate: Tuple[int, ...]) -> bool:
+        return all(a == UNKNOWN or a == b for a, b in zip(line, candidate))
 
-    # -------------------- Constraint propagation --------------------
+    def _compatible_patterns(self, line: List[int], clues: Tuple[int, ...]) -> List[Tuple[int, ...]]:
+        allp = self._gen_all_line_patterns(len(line), clues)
+        return [p for p in allp if self._fits_line(line, p)]
+
     def _reduce_once(self) -> bool:
-        """
-        One sweep over all rows and columns:
-          - Compute compatible patterns
-          - Intersect to deduce forced cells
-        Returns True if any cell changed.
-        """
         changed = False
 
-        # Rows
+        for r in range(self.R):
+            line = self.row(r)
+            if UNKNOWN in line:
+                ded, ch = self._deduce_line_envelope(line, self.row_clues[r])
+                if ch:
+                    for c, v in enumerate(ded):
+                        if v != UNKNOWN and self.grid[r][c] == UNKNOWN:
+                            self.grid[r][c] = v
+                            changed = True
+
+        for c in range(self.C):
+            line = self.col(c)
+            if UNKNOWN in line:
+                ded, ch = self._deduce_line_envelope(line, self.col_clues[c])
+                if ch:
+                    for r, v in enumerate(ded):
+                        if v != UNKNOWN and self.grid[r][c] == UNKNOWN:
+                            self.grid[r][c] = v
+                            changed = True
+
         for r in range(self.R):
             line = self.row(r)
             if UNKNOWN not in line:
                 continue
             pats = self._compatible_patterns(line, self.row_clues[r])
             if not pats:
-                # Infeasible state
                 raise ValueError("Contradiction in row {}".format(r))
-            deduced = self._intersect_patterns(pats)
-            for c, v in enumerate(deduced):
-                if v != UNKNOWN and self.grid[r][c] == UNKNOWN:
-                    self.grid[r][c] = v
+            L = len(line)
+            for i in range(L):
+                vals = {p[i] for p in pats}
+                if len(vals) == 1 and self.grid[r][i] == UNKNOWN:
+                    self.grid[r][i] = vals.pop()
                     changed = True
 
-        # Columns
         for c in range(self.C):
             line = self.col(c)
             if UNKNOWN not in line:
@@ -116,10 +204,11 @@ class NonogramSolver:
             pats = self._compatible_patterns(line, self.col_clues[c])
             if not pats:
                 raise ValueError("Contradiction in col {}".format(c))
-            deduced = self._intersect_patterns(pats)
-            for r, v in enumerate(deduced):
-                if v != UNKNOWN and self.grid[r][c] == UNKNOWN:
-                    self.grid[r][c] = v
+            L = len(line)
+            for i in range(L):
+                vals = {p[i] for p in pats}
+                if len(vals) == 1 and self.grid[i][c] == UNKNOWN:
+                    self.grid[i][c] = vals.pop()
                     changed = True
 
         return changed
@@ -129,25 +218,20 @@ class NonogramSolver:
             if not self._reduce_once():
                 return
 
-    # -------------------- Checkers --------------------
-    def is_solved(self) -> bool:
-        return all(UNKNOWN not in row for row in self.grid) and self._all_lines_valid()
-
     def _line_matches(self, line: List[int], clues: Tuple[int, ...]) -> bool:
-        # Convert a 0/1/UNKNOWN line to clue sequence (fail if UNKNOWN present)
         if UNKNOWN in line:
             return False
         blocks = []
-        count = 0
+        cnt = 0
         for x in line:
             if x == FILLED:
-                count += 1
+                cnt += 1
             else:
-                if count > 0:
-                    blocks.append(count)
-                    count = 0
-        if count > 0:
-            blocks.append(count)
+                if cnt > 0:
+                    blocks.append(cnt)
+                    cnt = 0
+        if cnt > 0:
+            blocks.append(cnt)
         return tuple(blocks) == clues
 
     def _all_lines_valid(self) -> bool:
@@ -159,50 +243,45 @@ class NonogramSolver:
                 return False
         return True
 
-    # -------------------- Search (backtracking) --------------------
-    def _select_branch_line(self) -> Tuple[bool, bool, int, List[Tuple[int, ...]]]:
-        """
-        Choose a line (row or column) with UNKNOWNs and minimal number of compatible patterns (>1).
-        Returns (is_row, is_col, index, patterns) where one of is_row/is_col is True.
-        If no branching needed, returns (False, False, -1, []).
-        """
-        best = (None, None, None)   # (is_row, index, pats)
+    def is_solved(self) -> bool:
+        return all(UNKNOWN not in row for row in self.grid) and self._all_lines_valid()
+
+    def _select_branch_line(self) -> Tuple[bool, int, List[Tuple[int, ...]]]:
+        best_idx = -1
+        best_pats = None
+        best_is_row = True
         best_count = float('inf')
 
-        # Rows
         for r in range(self.R):
             line = self.row(r)
             if UNKNOWN not in line:
                 continue
             pats = self._compatible_patterns(line, self.row_clues[r])
-            if len(pats) == 1:
-                # Will be set by propagation next pass; skip as branch
-                continue
             if 1 < len(pats) < best_count:
-                best = (True, r, pats)
                 best_count = len(pats)
+                best_is_row = True
+                best_idx = r
+                best_pats = pats
                 if best_count == 2:
-                    break  # very constrained, good enough
+                    break
 
-        # Columns (only search if we didn't find a 2-option row)
         if best_count > 2:
             for c in range(self.C):
                 line = self.col(c)
                 if UNKNOWN not in line:
                     continue
                 pats = self._compatible_patterns(line, self.col_clues[c])
-                if len(pats) == 1:
-                    continue
                 if 1 < len(pats) < best_count:
-                    best = (False, c, pats)
                     best_count = len(pats)
+                    best_is_row = False
+                    best_idx = c
+                    best_pats = pats
                     if best_count == 2:
                         break
 
-        if best[0] is None:
-            return (False, False, -1, [])
-        is_row, idx, pats = best
-        return (is_row, not is_row, idx, pats)
+        if best_idx == -1:
+            return False, -1, []
+        return best_is_row, best_idx, best_pats  # type: ignore
 
     def _clone(self):
         other = NonogramSolver(self.row_clues, self.col_clues)
@@ -213,15 +292,13 @@ class NonogramSolver:
         try:
             self._propagate()
         except ValueError:
-            return None  # immediate contradiction
+            return None
 
         if self.is_solved():
             return self.grid
 
-        # Pick a constrained line and branch
-        is_row, is_col, idx, pats = self._select_branch_line()
+        is_row, idx, pats = self._select_branch_line()
         if idx == -1:
-            # No unknowns left but not matching clues (rare), or stuck without choices
             return None
 
         if is_row:
@@ -246,10 +323,8 @@ class NonogramSolver:
                 if res is not None:
                     self.grid = res
                     return res
-
         return None
 
-    # Print
     def render(self, filled_char="█", empty_char="·") -> str:
         s = []
         for r in range(self.R):
@@ -258,36 +333,32 @@ class NonogramSolver:
         return "\n".join(s)
 
 
-if __name__ == "__main__":
-    rows = [
-        [4],
-        [2, 2, 1],
-        [3, 2],
-        [1],
-        [2, 2],
-        [1, 2],
-        [2, 3],
-        [1, 1],
-        [7],
-        [2, 5],
-    ]
+rows = [
+    [4],
+    [2, 2, 1],
+    [3, 2],
+    [1],
+    [2, 2],
+    [1, 2],
+    [2, 3],
+    [1, 1],
+    [7],
+    [2, 5],
+]
 
-    cols = [
-        [1, 2, 2,1],
-        [1, 1, 1, 1],
-        [3,1],
-        [2, 1],
-        [1, 1, 1],
-        [1, 4],
-        [1, 2, 2],
-        [1, 1, 2],
-        [1, 1, 3],
-        [2, 1, 1],
-    ]
+cols = [
+    [1, 2, 2, 1],
+    [1, 1, 1, 1],
+    [3, 1],
+    [2, 1],
+    [1, 1, 1],
+    [1, 4],
+    [1, 2, 2],
+    [1, 1, 2],
+    [1, 1, 3],
+    [2, 1, 1],
+]
 
-    solver = NonogramSolver(rows, cols)
-    solved = solver.solve()
-    if solved is None:
-        print("No solution.")
-    else:
-        print(solver.render())
+solver = NonogramSolver(rows, cols)
+sol = solver.solve()
+print(solver.render() if sol else "No solution found.")
