@@ -1,3 +1,3 @@
-Solver for Nongrams
+#Solver for Nongrams
 
 Programmed in python
