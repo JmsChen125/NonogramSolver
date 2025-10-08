@@ -3,10 +3,6 @@ from NonogramSolver import NonogramSolver, FILLED, EMPTY
 
 class TestNonogramSolver(unittest.TestCase):
 
-    # -------------------------------------------------------------
-    # 1. CORE SOLVER FUNCTIONALITY (end-to-end behavior)
-    # -------------------------------------------------------------
-
     def test_simple_5x5_plus(self):
         """Verify solver can handle a small valid 5x5 plus-sign puzzle."""
         rows = [[1], [1], [5], [1], [1]]
@@ -46,10 +42,6 @@ class TestNonogramSolver(unittest.TestCase):
         solver = NonogramSolver(rows, cols)
         result = solver.solve()
         self.assertIsNone(result)
-
-    # -------------------------------------------------------------
-    # 2. LINE DEDUCTION AND PATTERN LOGIC
-    # -------------------------------------------------------------
 
     def test_envelope_deduction_basic(self):
         """Test overlap rule in envelope deduction."""
@@ -102,10 +94,6 @@ class TestNonogramSolver(unittest.TestCase):
         self.assertIsInstance(earliest, list)
         self.assertIsInstance(latest, list)
 
-    # -------------------------------------------------------------
-    # 3. UTILITY AND HELPER METHODS
-    # -------------------------------------------------------------
-
     def test_row_and_col_helpers(self):
         solver = NonogramSolver([[1]], [[1]])
         solver.grid = [[1]]
@@ -132,10 +120,6 @@ class TestNonogramSolver(unittest.TestCase):
         solver.R, solver.C = 1, 3
         result = solver.render(filled_char="#", empty_char=".")
         self.assertEqual(result, "#.?")
-
-    # -------------------------------------------------------------
-    # 4. EDGE CASES AND INTERNAL LOGIC COVERAGE
-    # -------------------------------------------------------------
 
     def test_propagate_runs_without_error(self):
         solver = NonogramSolver([[1]], [[1]])

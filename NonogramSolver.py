@@ -107,7 +107,7 @@ class NonogramSolver:
     @staticmethod
     def _deduce_line_envelope(line: List[int], runs: Tuple[int, ...]) -> Tuple[List[int], bool]:
         """
-        Apply envelope (overlap) deduction to a single line.
+        Determine which cells in a line must be filled or empty based on the overlap of all possible block placements.
 
         Returns:
             A tuple (deductions, changed):
